@@ -1,0 +1,171 @@
+#!/bin/sh
+# --------------------------------------
+# name: music2attr
+# main: jadedctrl<@teknik.io>
+# lisc: MIT
+# date: 2020-11
+# --------------------------------------
+
+# ======================================
+# FFMPEG PARSING
+# ======================================
+# prints metadata output from FFMPEG of the given file
+function song_metadata {
+	local file="$1"
+
+	ffmpeg -i "$file" 2>&1 \
+	| sed '1,/Metadata/d' \
+	| head -n -1 \
+	| sed 's% : %:%'
+}
+
+# get value of song's metadata key, from it's `song_metadata` output
+function get_value {
+	local trait="$1"
+
+	sed -n "/^ *${trait}.*:/I,\$p" \
+	| sed "s/$trait//i" \
+	| print_until_nonempty
+}
+
+# ======================================
+# ATTRIBUTES
+# ======================================
+
+
+# set a song's metadata attribute, if file contains it
+# pipe in output from `song_metadata`
+function set_attr {
+	local file="$1"
+	local key="$2"
+	local attr="$3"
+	local type="$4"
+
+	local value="$(get_value "$key")"
+
+	if test "$type" = "time"; then set_time_attr "$file" "$attr" "$value"; return; fi
+	if echo "$type"|grep -q "^int";then set_int_attr "$file" "$attr" "$value" "$type";return;fi
+
+	if test -n "$value"; then
+		addattr -t "$type" "$attr" "$value" "$file"
+	fi
+}
+
+# we have some special sanitization to do for time attributes (helper of 'set_attr')
+function set_time_attr {
+	local file="$1"; local attr="$2"; local value="$3"
+
+	if test 5 -eq "$(echo "$value" | wc -c)"; then
+		value="${value}-01-01"
+	fi
+	if test -n "$value"; then
+		addattr -t "time" "$attr" "$value" "$file"
+	fi
+}
+
+# we have some special sanitization to do for ints, too (helper of 'set_attr')
+function set_int_attr {
+	local file="$1"; local attr="$2"; local value="$3"; local type="$4"
+
+	value="$(echo "$value" | sed 's%[A-z/, -].*%%')"
+	if test -n "$value"; then
+		addattr -t "$type" "$attr" "$value" "$file"
+	fi
+}
+
+# set a file's entire all song-related attributes 
+function set_song_attrs {
+	local file="$1"
+	meta="$(song_metadata "$file")"
+
+	echo "$meta" | set_title_attr  "$file" "Media:title"
+	echo "$meta" | set_year_attr   "$file" "Media:Year"
+	echo "$meta" | set_lyrics_attr "$file" "Audio:Lyrics"
+	echo "$meta" | set_artist_attr "$file" "Audio:Artist"
+	echo "$meta" | set_album_attr  "$file" "Audio:Album"
+	echo "$meta" | set_track_attr  "$file" "Audio:Track"
+}
+
+# set all of an album's necessary attributes
+function set_album_attrs {
+	song="$1"
+	album="$(dirname "$song")"
+	meta="$(song_metadata "$song")"
+
+	addattr -t mime "BEOS:TYPE" "audio/x-album" "$album"
+	echo "$meta" | set_artist_attr "$album" "Album:Artist"
+	echo "$meta" | set_year_attr   "$album" "Media:Year"
+}
+
+function set_title_attr  { set_attr "$1" "TITLE"  "$2" "string"; }
+function set_year_attr   { set_attr "$1" "DATE"   "$2" "int32";   }
+function set_lyrics_attr { set_attr "$1" "LYRICS" "$2" "string"; }
+function set_artist_attr { set_attr "$1" "ARTIST" "$2" "string"; }
+function set_album_attr  { set_attr "$1" "ALBUM"  "$2" "string"; }
+function set_track_attr  { set_attr "$1" "TRACK"  "$2" "int32";    }
+
+# ======================================
+# UTIL
+# ======================================
+# selects all fields except the first, until a a line's first field is non-empty
+# delimiter used is a colon.
+function print_until_nonempty {
+	awk -F ':' \
+	'{ lines[NR] = $0 }
+	END { i = 1
+		split( lines[i], L )
+		while ( i <= NR && match( L[1], /^( )+$/ ) ) {
+			for ( j = 2; j <= length(L); j = j + 1 ) {
+				if ( j > 2 )
+					printf ":"
+				printf L[j]
+			}
+			printf "\n"
+			i = i + 1
+			split( lines[i], L )
+		}
+	}'
+}
+
+# ======================================
+# INVOCATION
+# ======================================
+function help {
+	echo "usage: $(basename $0) [-hi] [-A|a] file"
+	echo
+	echo \
+"Use a song file's metadata to populate related attributes. The attributes set
+are 'Media:Title', 'Audio:Artist', 'Audio:Album', 'Audio:Track', and 'Media:year'.
+
+In addition, the parent directory is assumed to be the 'album' folder, its
+type is set to 'audio/x-album', and has its attributes populated with relevant
+metadata. The attributes set to 'album' folders are 'Album:Artist' and
+'Media:Year', based on the song files' metadata.
+
+$(basename $0) requires 'ffmpeg' to be installed.
+
+-a	don't edit the parent directory's attributes
+-A	only edit the parent directory's attributes
+-h	prints this message."
+	exit 1
+}
+
+ALBUM=1
+SONG=1
+
+while getopts ":haAi" arg; do
+	case $arg in
+		a) ALBUM=0;;
+		A) ALBUM=1; SONG=0;;
+
+		h) help;;
+	esac
+done
+
+shift $(($OPTIND - 1))
+
+if test -z "$@"; then help; fi
+if test ! -e /bin/ffmpeg; then help; fi
+
+if test "$SONG" -eq 1;  then set_song_attrs  "$@"; fi
+if test "$ALBUM" -eq 1; then set_album_attrs "$@"; fi
