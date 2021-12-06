@@ -168,12 +168,12 @@ if test -z "$1"; then help; fi
 if test ! -e /bin/ffmpeg; then help; fi
 
 if test "$SONG" -eq 1;  then
-	for song in $@; do
+	for song in "$@"; do
 		set_song_attrs "$song"
 	done
 fi
 if test "$ALBUM" -eq 1; then
-	for song in $@; do
+	for song in "$@"; do
 		set_album_attrs "$@"
 	done
 fi
