@@ -26,4 +26,4 @@ it like this:
 BORING STUFF
 ========================================
 MIT License
-Jaidyn Ann, jadedctrl@teknik.io
+Jaidyn Ann <jadedctrl@posteo.at>
